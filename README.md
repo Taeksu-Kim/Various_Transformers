@@ -1,1 +1,11 @@
 # Various_Transformers
+
+여러가지 Transformer들의 응용에 대해 정리한 repo
+
+순차적으로 작업할 예정
+
+Original Transformer
+
+Bert Style
+
+T5 Style
