@@ -2,9 +2,10 @@
 
 여러가지 Transformer들의 응용에 대해 정리한 repo
 
-순차적으로 작업할 예정
-
+## 작업 완료
 Original Transformer
+
+## 작업 예정
 
 Bert Style
 
