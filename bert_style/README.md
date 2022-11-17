@@ -1,5 +1,7 @@
 # Bert Style
 
+## Encoder-Decoder Model은 수정 중
+
 ## 특징
 - Position Embedding : 절대위치 position embedding
 - Embedding
