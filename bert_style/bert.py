@@ -84,7 +84,7 @@ class BertEncoder(nn.Module):
         device = input_ids.device
 
         if attention_mask is None:
-            attention_mask = input_ids.ne(self.config.pad_token_id)
+            attention_mask = input_ids.ne(self.config.pad_token_id).int()
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
@@ -205,7 +205,7 @@ class BertDecoder(nn.Module):
         input_shape = dec_input_ids.size()
         device = dec_input_ids.device
 
-        dec_attention_mask = dec_input_ids.ne(self.config.pad_token_id)
+        dec_attention_mask = dec_input_ids.ne(self.config.pad_token_id).int()
         token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
         dec_outputs = self.embedding(dec_input_ids,
@@ -309,7 +309,7 @@ class Bert_Encoder_Decoder_Model(nn.Module):
                                                                   enc_token_type_ids,
                                                                   enc_attention_mask,
                                                                   )
-
+        
         dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(dec_input_ids,
                                                                               enc_outputs,
                                                                               enc_mask)
