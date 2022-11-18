@@ -6,4 +6,4 @@
 - Embedding
   - 초기 트랜스포머 : Word_embedding + Positional encoding을 사용
   - Bert : Word_embedding + Token_type_embedding(인풋A(0), 인풋B(1) 구분) + Position_embedding 사용
-- Activation Function이 Relu -> Gelu로 변경됨
+- Feedforward의 Activation function이 Relu -> Gelu로 변경됨
