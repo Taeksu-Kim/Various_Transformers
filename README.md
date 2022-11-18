@@ -3,7 +3,7 @@
 여러가지 Transformer들의 응용에 대해 정리한 repo
 
 ## 작업 완료
-Original Transformer
+Original Transformer   
 Bert Style
 ## 작업 예정
 T5 Style
