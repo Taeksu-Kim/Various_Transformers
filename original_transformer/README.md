@@ -1,7 +1,7 @@
 # Original Transformer
 
 ## 특징
-- Encoder-Decoder Model
+- Encoder-Decoder 모델
 - Position embedding : Positional Encoding 사용
 - Encoder는 Bidirectional, Decoder는 Autoregressive 방식을 사용
 - Decoder는 Self Attention과 Cross Attention(Encoder Decoder Attention) 수행
