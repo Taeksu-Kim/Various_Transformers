@@ -291,7 +291,7 @@ class T5DecoderLayer(nn.Module):
 
         self.attention_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
 
-        self.feed_forward  = PoswiseFeedForward(config)
+        self.feed_forward = PoswiseFeedForward(config)
 
     def forward(self,
                 dec_inputs,
@@ -311,6 +311,11 @@ class T5DecoderLayer(nn.Module):
         dec_inputs = dec_outputs
         dec_outputs, cross_attn_prob = self.cross_attention(dec_inputs, enc_outputs, enc_outputs, cross_attention_mask)
 
+        
+        if dec_outputs.dtype == torch.float16 and torch.isinf(dec_outputs).any():
+            clamp_value = torch.finfo(dec_outputs.dtype).max - 1000
+            dec_outputs = torch.clamp(dec_outputs, min=-clamp_value, max=clamp_value)
+        
         dec_outputs = self.attention_layer_norm(dec_inputs + dec_outputs)
 
         dec_inputs = dec_outputs
