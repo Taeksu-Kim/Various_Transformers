@@ -3,6 +3,6 @@
 여러가지 Transformer들의 응용에 대해 정리한 repo
 
 ## 작업 완료
-Original Transformer   
-Bert Style
-T5 Style
+- Original Transformer   
+- Bert Style
+- T5 Style
