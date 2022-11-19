@@ -5,5 +5,4 @@
 ## 작업 완료
 Original Transformer   
 Bert Style
-## 작업 예정
 T5 Style
