@@ -9,3 +9,5 @@
 - Transformer, Bert와 달리 Attention에서 query에만 layer_norm을 진행하고 key, value는 layer_norm이 되지 않은 값을 인풋으로 받음
 - Feedforward의 Activation function을 gelu로 사용한 Bert와 달리 Transformer와 같이 relu 사용 
 - 모든 Linear에 bias=False이 적용되어 있음
+
+- songys  Chatbot data로 pretrain 없이 학습시켰을 때 거의 학습이 되지 않음. 구현상의 미스인가 해서 허깅페이스 T5로 돌려보더라도 마찬가지 결과. 바닐라 트랜스포머나 Bert의 경우에는 pretrain 없이도 어느정도 학습이 됐었음. position embedding의 차이 혹은 데이터의 길이가 너무 짧아서 그런것으로 보임.
