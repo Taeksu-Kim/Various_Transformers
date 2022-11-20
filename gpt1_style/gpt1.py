@@ -72,7 +72,7 @@ class GPT1Attention(nn.Module):
         batch_size = inputs.size(0)
 
         inputs = self.conv_layer(inputs)
-        query, key, value = x.split(self.d_model, dim=2)
+        query, key, value = inputs.split(self.d_model, dim=2)
 
         query =  query.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
         key = key.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
