@@ -101,7 +101,7 @@ class GPT1Decoder(nn.Module):
             [GPT1DecoderLayer(config) for i in range(config.num_dec_layers)]
         )
         self.position_ids = torch.arange(config.n_positions)
-        self.fc = nn.Linear(config.d_model, config.vocab_size)
+        self.fc = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
     def forward(self,
                 input_ids,
