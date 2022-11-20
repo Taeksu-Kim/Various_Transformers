@@ -115,9 +115,9 @@ class GPT1Decoder(nn.Module):
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
 
         if token_type_ids is None:
-            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=self.position_ids.device)
+            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=self.input_ids.device)
 
-        position_ids = self.position_ids[None, :seq_len]
+        position_ids = self.position_ids[None, :seq_len].to(input_ids.device)
 
         word_embeds = self.word_embedding(input_ids)
         token_type_embeds = self.word_embedding(token_type_ids)
