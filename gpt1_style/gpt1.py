@@ -60,8 +60,9 @@ class GPT1Attention(nn.Module):
         self.scale = self.d_head ** 0.5
 
         self.conv_layer = Conv1D(self.d_model * 3, self.d_model)
-        self.dropout = nn.Dropout(config.drop_out_raito)
+        self.attn_dropout = nn.Dropout(config.drop_out_raito)
         self.fc = Conv1D(self.d_model, self.d_model)
+        self.context_dropout = nn.Dropout(config.drop_out_raito)
 
     def forward(self,
                 inputs,
@@ -70,7 +71,7 @@ class GPT1Attention(nn.Module):
       
         batch_size = inputs.size(0)
 
-        inputs = self.cov_layer(inputs)
+        inputs = self.conv_layer(inputs)
         query, key, value = x.split(self.d_model, dim=2)
 
         query =  query.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
@@ -81,13 +82,13 @@ class GPT1Attention(nn.Module):
         scores = scores + attn_mask
         
         attn_prob = nn.Softmax(dim=-1)(scores)
-        attn_prob = self.dropout(attn_prob)
+        attn_prob = self.attn_dropout(attn_prob)
 
         context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
         context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
         
         context = self.fc(context)
-        context = self.dropout(context)
+        context = self.context_dropout(context)
 
         return context, attn_prob
 
