@@ -107,6 +107,7 @@ class GPT2Decoder(nn.Module):
         self.config = config
 
         self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        self.position_ids = torch.arange(config.max_position_embeddings).expand((1, -1))
         self.position_embedding = nn.Embedding(config.max_position_embeddings, config.d_model)
         self.dropout = nn.Dropout(config.drop_out_raito)
         
@@ -116,8 +117,6 @@ class GPT2Decoder(nn.Module):
         
         self.layer_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.fc = nn.Linear(config.d_model, config.vocab_size, bias=False)
-
-        self.position_ids = torch.arange(config.max_position_embeddings)
 
         # self.init_weights()
 
@@ -136,7 +135,7 @@ class GPT2Decoder(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=input_ids.device)
 
-        position_ids = self.position_ids[None, :seq_len].to(input_ids.device)
+        position_ids = self.position_ids[:, :seq_len].to(input_ids.device)
 
         word_embeds = self.word_embedding(input_ids)
         token_type_embeds = self.word_embedding(token_type_ids)
@@ -179,6 +178,5 @@ class GPT2DecoderLayer(nn.Module):
         inputs = outputs
         outputs = self.feed_forward(self.feed_forward_norm(inputs))
         outputs = inputs + outputs
-
-
+        
         return outputs, self_attn_prob
