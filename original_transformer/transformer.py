@@ -89,21 +89,6 @@ class PoswiseFeedForward(nn.Module):
     def forward(self, inputs):
         return self.feed_forward(inputs)
 
-class AddNorm(nn.Module):
-    def __init__(self, layer, d_model):
-        super(AddNorm, self).__init__()
-        self.layer = layer
-        self.layer_norm = nn.LayerNorm(d_model)
-
-    def forward(self, *args):
-        residual = args[0]
-        output = self.layer(*args)
-
-        if isinstance(output, tuple):
-            return self.layer_norm(output[0] + residual), output[1]
-        else:
-            return self.layer_norm(output + residual)
-
 class TransformerEncoder(nn.Module):
     def __init__(self, config):
         super(TransformerEncoder, self).__init__()
@@ -135,12 +120,22 @@ class TransformerEncoder(nn.Module):
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, config):
         super(TransformerEncoderLayer, self).__init__()
-        self.self_attention = AddNorm(MultiHeadAttention(config), config.d_model)
-        self.feed_forward = AddNorm(PoswiseFeedForward(config), config.d_model)
+        
+        self.self_attention = MultiHeadAttention(config)
+        self.attention_norm = nn.LayerNorm(config.d_model)
+
+        self.feed_forward = PoswiseFeedForward(config)
+        self.feed_forward_norm = nn.LayerNorm(config.d_model)
 
     def forward(self, inputs, self_attn_mask):
+
         outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attn_mask)
+        outputs = self.attention_norm(inputs + outputs)
+
+        inputs = outputs
         outputs = self.feed_forward(outputs)
+        outputs = self.feed_forward_norm(inputs + outputs)
+        
         return outputs, self_attn_prob
 
 class TransformerDecoder(nn.Module):
@@ -184,17 +179,28 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(self, config):
         super(TransformerDecoderLayer, self).__init__()
 
-        self.self_attention = AddNorm(MultiHeadAttention(config), config.d_model)
-        self.cross_attention = AddNorm(MultiHeadAttention(config), config.d_model)
+        self.self_attention = MultiHeadAttention(config)
+        self.self_attention_norm = nn.LayerNorm(config.d_model)
+
+        self.cross_attention = MultiHeadAttention(config)
+        self.cross_attention_norm = nn.LayerNorm(config.d_model)
         
-        self.feed_forward = AddNorm(PoswiseFeedForward(config), config.d_model)
+        self.feed_forward = PoswiseFeedForward(config)
+        self.feed_forward_norm = nn.LayerNorm(config.d_model)
 
     def forward(self, dec_inputs, enc_outputs, self_attn_mask, cross_attn_mask):
         
         outputs, self_attn_prob = self.self_attention(dec_inputs, dec_inputs, dec_inputs, self_attn_mask)
+        outputs = self.self_attention_norm(inputs + outputs)
+
+        inputs = outputs
         outputs, cross_attn_prob = self.cross_attention(outputs, enc_outputs, enc_outputs, cross_attn_mask)
-        outputs = self.feed_forward(outputs)
+        outputs = self.cross_attention_norm(inputs + outputs)
         
+        inputs = outputs
+        outputs = self.feed_forward(outputs)
+        outputs = self.feed_forward_norm(inputs + outputs)
+
         return outputs, self_attn_prob, cross_attn_prob
 
 class Transformer(nn.Module):
