@@ -183,13 +183,13 @@ class TransformerDecoder(nn.Module):
         word_embeds = self.word_embedding(input_ids) * self.sqrt_dim
         position_embeds = self.pos_encoding[:, :seq_len].to(input_ids.device)
 
-        dec_outputs = word_embeds + position_embeds
+        outputs = word_embeds + position_embeds
 
         self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True) 
 
         self_attn_probs, cross_attn_probs = [], []
         for layer in self.layers:
-            dec_outputs, self_attn_prob, cross_attn_prob = layer(inputs=dec_outputs, 
+            outputs, self_attn_prob, cross_attn_prob = layer(inputs=outputs, 
                                                                  self_attention_mask=self_attention_mask, 
                                                                  enc_outputs=enc_outputs, 
                                                                  cross_attention_mask=enc_attention_mask,
@@ -197,9 +197,9 @@ class TransformerDecoder(nn.Module):
             self_attn_probs.append(self_attn_prob)
             cross_attn_probs.append(cross_attn_prob)        
         
-        dec_outputs = self.fc(dec_outputs)
+        outputs = self.fc(outputs)
 
-        return dec_outputs, self_attn_probs, cross_attn_probs
+        return outputs, self_attn_probs, cross_attn_probs
 
 class TransformerDecoderLayer(nn.Module):
     def __init__(self, config):
