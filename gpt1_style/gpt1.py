@@ -167,6 +167,4 @@ class GPT1DecoderLayer(nn.Module):
         outputs = self.feed_forward(inputs)
         outputs = self.feed_forward_norm(inputs + outputs)
 
-
-
         return outputs, self_attn_prob
