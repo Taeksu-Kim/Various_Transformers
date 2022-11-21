@@ -16,15 +16,23 @@ def PositionalEncoding(max_seq_len, d_model):
     
     return pe
 
-def get_attn_pad_mask(key_inputs, pad_id, query_len):                   # self_attention : [bs, query_len, query_len]
-    return key_inputs.eq(pad_id).unsqueeze(1).expand(-1, query_len, -1) # cross_attention : [bs, query_len, key_len]
+def get_extended_attention_mask(attention_mask, autoregressive=False):
 
-# decoder mask for the back of current positions. shape of attention matrix
-# it's used for decoder self attention.
-def get_subsequent_mask(inputs):
-    subsequent_mask = torch.ones_like(inputs).unsqueeze(-1).expand(inputs.size(0), inputs.size(1), inputs.size(1)) # [bs, query_len, key_len]
-    subsequent_mask = subsequent_mask.triu(diagonal=1) # like 0, 1, 1, 1...  subsequent_mask
-    return subsequent_mask                             #      0, 0, 1, 1... 
+    dtype = torch.float16
+
+    extended_attention_mask = attention_mask[:, None, None, :]
+
+    if autoregressive is True:
+
+      subsequent_mask = torch.ones_like(extended_attention_mask, device=attention_mask.device).expand(-1, -1, attention_mask.size(1), -1)
+      subsequent_mask = subsequent_mask.triu(diagonal=1)
+      subsequent_mask = torch.lt(subsequent_mask,1)
+
+      extended_attention_mask = torch.gt((extended_attention_mask+subsequent_mask), 1).int()
+
+    extended_attention_mask = extended_attention_mask.to(dtype=dtype)  # fp16 compatibility
+    extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(dtype).min
+    return extended_attention_mask
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
@@ -40,22 +48,20 @@ class MultiHeadAttention(nn.Module):
         self.value_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
 
         self.scaled_dot_attn = ScaledDotProductAttention(config, self.d_head)
-        self.linear = nn.Linear(self.d_head * self.num_att_heads, self.d_model)
+        self.fc = nn.Linear(self.d_head * self.num_att_heads, self.d_model)
 
-    def forward(self, query, key, value, attn_mask):
+    def forward(self, query, key, value, attention_mask):
         batch_size = query.size(0)
 
         query = self.query_proj(query).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
         key = self.key_proj(key).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
         value = self.value_proj(value).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
 
-        attn_mask = attn_mask.unsqueeze(1).repeat(1, self.num_att_heads, 1, 1) # [bs, query_len, key_len] -> [bs, num_heads, query_len, key_len]
-
-        context, attn_prob = self.scaled_dot_attn(query, key, value, attn_mask)
+        context, attn_prob = self.scaled_dot_attn(query, key, value, attention_mask)
 
         context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
         
-        output = self.linear(context)
+        output = self.fc(context)
         
         return output, attn_prob
 
@@ -65,11 +71,11 @@ class ScaledDotProductAttention(nn.Module):
         self.config = config
         self.scale = d_head ** 0.5
 
-    def forward(self, query, key, value, attn_mask):
+    def forward(self, query, key, value, attention_mask):
 
         scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]
         
-        scores.masked_fill_(attn_mask, -1e4)
+        scores = scores + attention_mask
         
         attn_prob = nn.Softmax(dim=-1)(scores)
         context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
@@ -93,7 +99,7 @@ class TransformerEncoder(nn.Module):
     def __init__(self, config):
         super(TransformerEncoder, self).__init__()
         self.config = config
-        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_id)
+        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
         self.sqrt_dim = math.sqrt(config.d_model)
         self.pos_encoding = PositionalEncoding(config.max_enc_len, config.d_model)
 
@@ -101,21 +107,32 @@ class TransformerEncoder(nn.Module):
             [TransformerEncoderLayer(config) for _ in range(config.num_enc_layers)]
         )
 
-    def forward(self, enc_inputs, self_attn_mask=None):
-        outputs = self.word_embedding(enc_inputs) * self.sqrt_dim + self.pos_encoding.to(enc_inputs.device)
+    def forward(
+        self, 
+        input_ids, 
+        attention_mask=None,
+        ):
 
-        if self_attn_mask == None:
-            self_attn_mask = get_attn_pad_mask(enc_inputs, self.config.pad_id, enc_inputs.size(1))
-            
-        else:
-            self_attn_mask = get_attn_pad_mask(self_attn_mask, 0, self_attn_mask.size(1))
+        batch_size, seq_len = input_ids.size()
+
+        if attention_mask is None:
+            attention_mask = input_ids.ne(self.config.pad_token_id).int()
+
+        word_embeds = self.word_embedding(input_ids) * self.sqrt_dim
+        position_embeds = self.pos_encoding[:, :seq_len].to(input_ids.device)
+
+        outputs = word_embeds + position_embeds
+
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=False)    
 
         self_attn_probs = []
         for layer in self.layers:
-            outputs, self_attn_prob = layer(outputs, self_attn_mask)
+            outputs, self_attn_prob = layer(outputs, 
+                                            self_attention_mask,
+                                            )
             self_attn_probs.append(self_attn_prob)
         
-        return outputs, self_attn_probs
+        return outputs, self_attn_probs, self_attention_mask   
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, config):
@@ -127,13 +144,13 @@ class TransformerEncoderLayer(nn.Module):
         self.feed_forward = PoswiseFeedForward(config)
         self.feed_forward_norm = nn.LayerNorm(config.d_model)
 
-    def forward(self, inputs, self_attn_mask):
+    def forward(self, inputs, self_attention_mask):
 
-        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attn_mask)
+        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
         outputs = self.attention_norm(inputs + outputs)
 
         inputs = outputs
-        outputs = self.feed_forward(outputs)
+        outputs = self.feed_forward(inputs)
         outputs = self.feed_forward_norm(inputs + outputs)
         
         return outputs, self_attn_prob
@@ -142,7 +159,7 @@ class TransformerDecoder(nn.Module):
     def __init__(self, config):
         super(TransformerDecoder, self).__init__()
         self.config = config
-        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_id)
+        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
         self.sqrt_dim = math.sqrt(config.d_model)
         self.pos_encoding = PositionalEncoding(config.max_dec_len, config.d_model)
 
@@ -153,21 +170,30 @@ class TransformerDecoder(nn.Module):
         self.fc = nn.Linear(config.d_model, config.vocab_size)
 
     def forward(self,
-                dec_inputs,
-                enc_outputs,
-                enc_inputs):
-               
-        dec_outputs = self.word_embedding(dec_inputs) * self.sqrt_dim + self.pos_encoding[:, :dec_inputs.size(1)].to(dec_inputs.device)
+                input_ids,
+                attention_mask=None,
+                enc_outputs=None,
+                enc_attention_mask=None):
 
-        dec_self_attn_pad_mask = get_attn_pad_mask(dec_inputs, self.config.pad_id, dec_inputs.size(1))
-        dec_self_attn_subsequent_mask = get_subsequent_mask(dec_inputs)
-        dec_self_attn_mask = torch.gt((dec_self_attn_pad_mask + dec_self_attn_subsequent_mask), 0)
+        batch_size, seq_len = input_ids.size()
 
-        dec_cross_attn_mask = get_attn_pad_mask(enc_inputs, self.config.pad_id, dec_inputs.size(1))
+        if attention_mask is None:
+            attention_mask = input_ids.ne(self.config.pad_token_id).int()
+
+        word_embeds = self.word_embedding(input_ids) * self.sqrt_dim
+        position_embeds = self.pos_encoding[:, :seq_len].to(input_ids.device)
+
+        dec_outputs = word_embeds + position_embeds
+
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True) 
 
         self_attn_probs, cross_attn_probs = [], []
         for layer in self.layers:
-            dec_outputs, self_attn_prob, cross_attn_prob = layer(dec_outputs, enc_outputs, dec_self_attn_mask, dec_cross_attn_mask)
+            dec_outputs, self_attn_prob, cross_attn_prob = layer(inputs=dec_outputs, 
+                                                                 self_attention_mask=self_attention_mask, 
+                                                                 enc_outputs=enc_outputs, 
+                                                                 cross_attention_mask=enc_attention_mask,
+                                                                 )
             self_attn_probs.append(self_attn_prob)
             cross_attn_probs.append(cross_attn_prob)        
         
@@ -188,17 +214,22 @@ class TransformerDecoderLayer(nn.Module):
         self.feed_forward = PoswiseFeedForward(config)
         self.feed_forward_norm = nn.LayerNorm(config.d_model)
 
-    def forward(self, dec_inputs, enc_outputs, self_attn_mask, cross_attn_mask):
+    def forward(
+        self, 
+        inputs, 
+        self_attention_mask,
+        enc_outputs,  
+        cross_attention_mask):
         
-        outputs, self_attn_prob = self.self_attention(dec_inputs, dec_inputs, dec_inputs, self_attn_mask)
+        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
         outputs = self.self_attention_norm(inputs + outputs)
 
         inputs = outputs
-        outputs, cross_attn_prob = self.cross_attention(outputs, enc_outputs, enc_outputs, cross_attn_mask)
+        outputs, cross_attn_prob = self.cross_attention(inputs, enc_outputs, enc_outputs, cross_attention_mask)
         outputs = self.cross_attention_norm(inputs + outputs)
         
         inputs = outputs
-        outputs = self.feed_forward(outputs)
+        outputs = self.feed_forward(inputs)
         outputs = self.feed_forward_norm(inputs + outputs)
 
         return outputs, self_attn_prob, cross_attn_prob
@@ -231,22 +262,24 @@ class Transformer(nn.Module):
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
-            module.eps = self.config.norm_eps
+            module.eps = self.config.layer_norm_eps
 
     def forward(self, 
-                enc_inputs, 
-                dec_inputs=None, 
-                enc_self_attn_mask=None,
-                dec_self_attn_mask=None,
-                dec_cross_attn_mask=None):
+                enc_input_ids, 
+                dec_input_ids=None, 
+                enc_attention_mask=None,
+                dec_attention_mask=None,
+                ):
         
-        enc_outputs, enc_self_attn_probs = self.encoder(enc_inputs, enc_self_attn_mask)
+        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(input_ids=enc_input_ids, 
+                                                                            attention_mask=enc_attention_mask)
         
         if self.config.use_decoder == False:
             return enc_outputs, enc_self_attn_probs
         
-        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(dec_inputs,
-                                                                              enc_outputs, 
-                                                                              enc_inputs)
+        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
+                                                                              attention_mask=dec_attention_mask,
+                                                                              enc_outputs=enc_outputs, 
+                                                                              enc_attention_mask=enc_attention_mask)
         
         return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
