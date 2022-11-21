@@ -66,7 +66,7 @@ class GPT1Attention(nn.Module):
 
     def forward(self,
                 inputs,
-                attn_mask,
+                attention_mask,
                 ):
       
         batch_size = inputs.size(0)
@@ -79,7 +79,7 @@ class GPT1Attention(nn.Module):
         value = value.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
 
         scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]        
-        scores = scores + attn_mask
+        scores = scores + attention_mask
         
         attn_prob = nn.Softmax(dim=-1)(scores)
         attn_prob = self.attn_dropout(attn_prob)
