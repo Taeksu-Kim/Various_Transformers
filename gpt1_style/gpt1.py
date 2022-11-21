@@ -103,12 +103,14 @@ class GPT1Decoder(nn.Module):
         self.config = config
 
         self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        self.position_ids = torch.arange(config.max_position_embeddings).expand((1, -1))
         self.position_embedding = nn.Embedding(config.max_position_embeddings, config.d_model)
         self.dropout = nn.Dropout(config.drop_out_raito)
         self.layers = nn.ModuleList(
             [GPT1DecoderLayer(config) for i in range(config.num_dec_layers)]
         )
-        self.position_ids = torch.arange(config.max_position_embeddings)
+
+
         self.fc = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
     def forward(self,
@@ -125,7 +127,7 @@ class GPT1Decoder(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=input_ids.device)
 
-        position_ids = self.position_ids[None, :seq_len].to(input_ids.device)
+        position_ids = self.position_ids[:, :seq_len].to(input_ids.device)
 
         word_embeds = self.word_embedding(input_ids)
         token_type_embeds = self.word_embedding(token_type_ids)
