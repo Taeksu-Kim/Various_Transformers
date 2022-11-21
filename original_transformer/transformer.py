@@ -101,7 +101,7 @@ class TransformerEncoder(nn.Module):
         self.config = config
         self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
         self.sqrt_dim = math.sqrt(config.d_model)
-        self.pos_encoding = PositionalEncoding(config.max_enc_len, config.d_model)
+        self.pos_encoding = PositionalEncoding(config.max_position_embeddings, config.d_model)
 
         self.layers = nn.ModuleList(
             [TransformerEncoderLayer(config) for _ in range(config.num_enc_layers)]
@@ -161,7 +161,7 @@ class TransformerDecoder(nn.Module):
         self.config = config
         self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
         self.sqrt_dim = math.sqrt(config.d_model)
-        self.pos_encoding = PositionalEncoding(config.max_dec_len, config.d_model)
+        self.pos_encoding = PositionalEncoding(config.max_position_embeddings, config.d_model)
 
         self.layers = nn.ModuleList(
             [TransformerDecoderLayer(config) for _ in range(config.num_dec_layers)]
