@@ -45,23 +45,23 @@ class BertEmbeddings(nn.Module):
 
         self.position_ids = torch.arange(config.max_position_embeddings).expand((1, -1))
 
-    def forward(self, input_ids=None, token_type_ids=None, position_ids=None):
+    def forward(
+        self, 
+        input_ids=None, 
+        token_type_ids=None, 
+        position_ids=None,
+        ):
         
-        input_shape = input_ids.size()
-        seq_length = input_shape[1]
-
-        position_ids = self.position_ids[:, :seq_length].to(input_ids.device)
-
-        if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=self.position_ids.device)
+        batch_size, seq_len = input_ids.size()
 
         inputs_embeds = self.word_embeddings(input_ids)
         
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        embeddings = inputs_embeds + token_type_embeddings
-        
+
+        position_ids = self.position_ids[:, :seq_len].to(input_ids.device)
         position_embeddings = self.position_embeddings(position_ids)
-        embeddings += position_embeddings
+        
+        embeddings = inputs_embeds + token_type_embeddings + position_embeddings
         
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
@@ -73,7 +73,6 @@ class BertEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.embedding = embedding
-
         self.layers = nn.ModuleList(
             [BertEncoderLayer(config) for _ in range(config.num_enc_layers)]
         )
@@ -84,27 +83,26 @@ class BertEncoder(nn.Module):
                 attention_mask,
                 ):
 
-        input_shape = input_ids.size()
-        device = input_ids.device
+        batch_size, seq_len = input_ids.size()
 
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
         if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=device)
 
         outputs = self.embedding(input_ids,
                                  token_type_ids=token_type_ids)
         
-        extended_attention_mask = get_extended_attention_mask(attention_mask)
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=False)
 
         self_attn_probs = []
         for i, layer in enumerate(self.layers):
-            outputs, self_attn_prob = layer(outputs,
-                                            extended_attention_mask,
+            outputs, self_attn_prob = layer(inputs=outputs,
+                                            self_attention_mask=self_attention_mask,
                                             )
             self_attn_probs.append(self_attn_prob)
 
-        return outputs, self_attn_probs, extended_attention_mask    
+        return outputs, self_attn_probs, self_attention_mask    
     
 class BertEncoderLayer(nn.Module):
     def __init__(self, config):
@@ -114,9 +112,13 @@ class BertEncoderLayer(nn.Module):
         self.feed_forward = PoswiseFeedForward(config)
         self.feed_forward_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
 
-    def forward(self, inputs, self_attn_mask):
+    def forward(
+        self, 
+        inputs, 
+        self_attention_mask,
+        ):
 
-        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attn_mask)
+        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
         outputs = self.attention_norm(inputs + outputs)
 
         inputs = outputs
@@ -138,9 +140,10 @@ class BertAttention(nn.Module):
         self.key_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
         self.value_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
 
-        self.dropout = nn.Dropout(config.drop_out_raito)
+        self.attn_dropout = nn.Dropout(config.drop_out_raito)
 
         self.fc = nn.Linear(self.d_head * self.num_att_heads, self.d_model)
+        self.context_dropout = nn.Dropout(config.drop_out_raito)
 
     def forward(self,
                 query,
@@ -159,13 +162,13 @@ class BertAttention(nn.Module):
         scores = scores + attention_mask
         
         attn_prob = nn.Softmax(dim=-1)(scores)
-        attn_prob = self.dropout(attn_prob)
+        attn_prob = self.attn_dropout(attn_prob)
 
         context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
         context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
         
         context = self.fc(context)
-        context = self.dropout(context)
+        context = self.context_dropout(context)
 
         return context, attn_prob
 
@@ -181,9 +184,9 @@ class BertModel(nn.Module):
                 attention_mask=None,
                 ):
 
-      outputs, self_attn_probs, _ = self.encoder(input_ids,
-                                                 token_type_ids,
-                                                 attention_mask,
+      outputs, self_attn_probs, _ = self.encoder(input_ids=input_ids,
+                                                 token_type_ids=token_type_ids,
+                                                 attention_mask=attention_mask,
                                                  )
       
       return outputs, self_attn_probs
@@ -193,43 +196,41 @@ class BertDecoder(nn.Module):
         super().__init__()
         self.config = config
         self.embedding = embedding
-
         self.layers = nn.ModuleList(
             [BertDecoderLayer(config) for _ in range(config.num_enc_layers)]
         )
-
         self.fc = nn.Linear(config.d_model, config.vocab_size)
 
     def forward(self,
-                dec_input_ids,
+                input_ids,
+                attention_mask=None,
                 enc_outputs=None,
-                cross_attention_mask=None):
+                enc_attention_mask=None):
       
+        batch_size, seq_len = input_ids.size()
 
-        input_shape = dec_input_ids.size()
-        device = dec_input_ids.device
+        if attention_mask is None:
+            attention_mask = input_ids.ne(self.config.pad_token_id).int()
+        token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=input_ids.device)
 
-        dec_attention_mask = dec_input_ids.ne(self.config.pad_token_id).int()
-        token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+        outputs = self.embedding(input_ids,
+                                 token_type_ids=token_type_ids)
 
-        dec_outputs = self.embedding(dec_input_ids,
-                                     token_type_ids=token_type_ids)
-        
-        self_attention_mask = get_extended_attention_mask(dec_attention_mask, autoregressive=True)
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
 
         self_attn_probs, cross_attn_probs = [], []
         for i, layer in enumerate(self.layers):
-            dec_outputs, self_attn_prob, cross_attn_prob = layer(dec_outputs,
-                                                                 enc_outputs,
-                                                                 self_attention_mask,
-                                                                 cross_attention_mask,
-                                                                 )
+            outputs, self_attn_prob, cross_attn_prob = layer(inputs=outputs,
+                                                             self_attention_mask=self_attention_mask,
+                                                             enc_outputs=enc_outputs,
+                                                             cross_attention_mask=enc_attention_mask,
+                                                             )
             self_attn_probs.append(self_attn_prob)
             cross_attn_probs.append(cross_attn_prob)      
 
-        dec_outputs = self.fc(dec_outputs)        
+        outputs = self.fc(outputs)        
 
-        return dec_outputs, self_attn_probs, cross_attn_probs
+        return outputs, self_attn_probs, cross_attn_probs
 
 class BertDecoderLayer(nn.Module):
     def __init__(self, config):
@@ -244,24 +245,24 @@ class BertDecoderLayer(nn.Module):
         self.feed_forward_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
         
     def forward(self,
-                dec_inputs,
-                enc_outputs,
+                inputs,
                 self_attention_mask,
+                enc_outputs,
                 cross_attention_mask,
                 ):
 
-        dec_outputs, self_attn_prob = self.self_attention(dec_inputs, dec_inputs, dec_inputs, self_attention_mask)
-        dec_outputs = self.self_attention_norm(dec_inputs + dec_outputs)
+        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
+        outputs = self.self_attention_norm(inputs + outputs)
 
-        dec_inputs = dec_outputs
-        dec_outputs, cross_attn_prob = self.cross_attention(dec_inputs, enc_outputs, enc_outputs, cross_attention_mask)
-        dec_outputs = self.cross_attention_norm(dec_inputs + dec_outputs)
+        inputs = outputs
+        outputs, cross_attn_prob = self.cross_attention(inputs, enc_outputs, enc_outputs, cross_attention_mask)
+        outputs = self.cross_attention_norm(inputs + outputs)
 
-        dec_inputs = dec_outputs
-        dec_outputs = self.feed_forward(dec_inputs)
-        dec_outputs = self.feed_forward_norm(dec_inputs + dec_outputs)
+        inputs = outputs
+        outputs = self.feed_forward(inputs)
+        outputs = self.feed_forward_norm(inputs + outputs)
         
-        return dec_outputs, self_attn_prob, cross_attn_prob    
+        return outputs, self_attn_prob, cross_attn_prob
 
 class Bert_Encoder_Decoder_Model(nn.Module):
     def __init__(self, config):
@@ -307,15 +308,18 @@ class Bert_Encoder_Decoder_Model(nn.Module):
                 enc_token_type_ids=None,
                 enc_attention_mask=None,
                 dec_input_ids=None,
+                dec_attention_mask=None,
                 ):
 
-        enc_outputs, enc_self_attn_probs, enc_mask = self.encoder(enc_input_ids,
+        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(enc_input_ids,
                                                                   enc_token_type_ids,
                                                                   enc_attention_mask,
                                                                   )
         
-        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(dec_input_ids,
-                                                                              enc_outputs,
-                                                                              enc_mask)
+        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
+                                                                              attention_mask=dec_attention_mask,
+                                                                              enc_outputs=enc_outputs,
+                                                                              enc_attention_mask=enc_attention_mask,
+                                                                              )
 
         return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
