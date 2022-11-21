@@ -312,9 +312,9 @@ class Bert_Encoder_Decoder_Model(nn.Module):
                 ):
 
         enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(enc_input_ids,
-                                                                  enc_token_type_ids,
-                                                                  enc_attention_mask,
-                                                                  )
+                                                                            enc_token_type_ids,
+                                                                            enc_attention_mask,
+                                                                            )
         
         dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
                                                                               attention_mask=dec_attention_mask,
