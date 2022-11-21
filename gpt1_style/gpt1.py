@@ -162,7 +162,7 @@ class GPT1DecoderLayer(nn.Module):
 
     def forward(self,
                 inputs,
-                self_attention_mask=None,
+                self_attention_mask,
                 ):
         
         outputs, self_attn_prob = self.self_attention(query=inputs, 
