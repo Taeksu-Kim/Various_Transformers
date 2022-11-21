@@ -146,7 +146,7 @@ class BertAttention(nn.Module):
                 query,
                 key,
                 value,
-                attn_mask,
+                attention_mask,
                 ):
       
         batch_size = query.size(0)
@@ -156,7 +156,7 @@ class BertAttention(nn.Module):
         value = self.value_proj(value).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
 
         scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]        
-        scores = scores + attn_mask
+        scores = scores + attention_mask
         
         attn_prob = nn.Softmax(dim=-1)(scores)
         attn_prob = self.dropout(attn_prob)
