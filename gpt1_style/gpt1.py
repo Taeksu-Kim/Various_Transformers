@@ -99,13 +99,16 @@ class GPT1Attention(nn.Module):
 class GPT1Decoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+
+        self.config = config
+
         self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.position_embedding = nn.Embedding(config.max_position_embeddings, config.d_model)
         self.dropout = nn.Dropout(config.drop_out_raito)
         self.layers = nn.ModuleList(
             [GPT1DecoderLayer(config) for i in range(config.num_dec_layers)]
         )
-        self.position_ids = torch.arange(config.n_positions)
+        self.position_ids = torch.arange(config.max_position_embeddings)
         self.fc = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
     def forward(self,
@@ -120,7 +123,7 @@ class GPT1Decoder(nn.Module):
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
 
         if token_type_ids is None:
-            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=self.input_ids.device)
+            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=input_ids.device)
 
         position_ids = self.position_ids[None, :seq_len].to(input_ids.device)
 
