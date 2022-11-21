@@ -70,17 +70,18 @@ class GPT2Attention(nn.Module):
         self.fc = Conv1D(self.d_model, self.d_model)
         self.context_dropout = nn.Dropout(config.drop_out_raito)
 
-    def forward(
-        self,
-        inputs,
-        attention_mask,
-        ):
-      
-        batch_size = inputs.size(0)
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                attention_mask=None,
+                ):
 
-        inputs = self.conv_layer(inputs)
+        if key is None and value is None:
+            query = self.conv_layer(query)
+            query, key, value = query.split(self.d_model, dim=2)
 
-        query, key, value = inputs.split(self.d_model, dim=2)
+        batch_size = query.size(0)
 
         query =  query.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
         key = key.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
@@ -144,12 +145,12 @@ class GPT2Decoder(nn.Module):
         outputs = word_embeds + token_type_embeds + position_embeds
         outputs = self.dropout(outputs)
 
-        extended_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
 
         self_attn_probs = []
         for i, layer in enumerate(self.layers):
-            outputs, self_attn_prob = layer(outputs,
-                                            extended_attention_mask, 
+            outputs, self_attn_prob = layer(inputs=outputs,
+                                            self_attention_mask=self_attention_mask, 
                                             )
             self_attn_probs.append(self_attn_prob)     
 
@@ -167,12 +168,15 @@ class GPT2DecoderLayer(nn.Module):
         self.feed_forward = PoswiseFeedForward(config)
         self.feed_forward_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)     
 
-    def forward(
-        self,
-        inputs,
-        attention_mask,
-    ):
-        outputs, self_attn_prob = self.self_attention(self.attention_norm(inputs), attention_mask)
+    def forward(self,
+                inputs,
+                self_attention_mask,
+                ):
+        outputs, self_attn_prob = self.self_attention(query=self.attention_norm(inputs),
+                                                      key=None,
+                                                      value=None, 
+                                                      attention_mask=self_attention_mask,
+                                                      )
         outputs = inputs + outputs
         
         inputs = outputs
