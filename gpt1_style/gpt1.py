@@ -162,4 +162,4 @@ class GPT1DecoderLayer(nn.Module):
 
 
 
-        return outputs, self_attn_probs
+        return outputs, self_attn_prob
