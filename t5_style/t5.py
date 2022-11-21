@@ -54,7 +54,7 @@ class T5LayerNorm(nn.Module):
 class T5Encoder(nn.Module):
     def __init__(self, config, embedding):
         super().__init__()
-        self.embedding = embedding
+        self.word_embedding = embedding
         self.layers = nn.ModuleList(
             [T5EncoderLayer(config) for i in range(config.num_enc_layers)]
         )
@@ -70,41 +70,43 @@ class T5Encoder(nn.Module):
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
 
-        extended_attention_mask = get_extended_attention_mask(attention_mask)
+        self_attention_mask = get_extended_attention_mask(attention_mask)
 
-        outputs = self.embedding(input_ids)
+        outputs = self.word_embedding(input_ids)
       
         self_attn_probs = []
         for i, layer in enumerate(self.layers):
             outputs, self_attn_prob = layer(outputs,
-                                            extended_attention_mask,
+                                            self_attention_mask,
                                             )
             self_attn_probs.append(self_attn_prob)
 
         outputs = self.final_layer_norm(outputs)
         outputs = self.dropout(outputs)
 
-        return outputs, self_attn_probs, extended_attention_mask    
+        return outputs, self_attn_probs, self_attention_mask  
 
 class T5EncoderLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.self_attention_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.self_attention = T5Attention(config, has_relative_attention_bias=True, autoregressive=False)
-        self.attention_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
 
+        self.feed_forward_norm= T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.feed_forward  = PoswiseFeedForward(config)
 
     def forward(self, 
                 inputs, 
                 self_attention_mask):
 
-        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
+        normed_inputs = self.self_attention_norm(inputs)
+        outputs, self_attn_prob = self.self_attention(normed_inputs, normed_inputs, normed_inputs, self_attention_mask)
         
-        outputs = self.attention_layer_norm(inputs + outputs)
+        outputs = inputs + outputs
 
         inputs = outputs
-        outputs = self.feed_forward(inputs)
+        outputs = self.feed_forward(self.feed_forward_norm(inputs))
         outputs = inputs + outputs
 
         # clamp inf values to enable fp16 training
@@ -124,7 +126,6 @@ class T5Attention(nn.Module):
         self.scale = self.d_head ** 0.5
         self.has_relative_attention_bias = has_relative_attention_bias
         
-        self.query_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.query_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head, bias=False)
         self.key_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head, bias=False)
         self.value_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head, bias=False)
@@ -142,20 +143,17 @@ class T5Attention(nn.Module):
         """
         Adapted from Mesh Tensorflow:
         https://github.com/tensorflow/mesh/blob/0cb87fe07da627bf0b7e60475d59f95ed6b5be3d/mesh_tensorflow/transformer/transformer_layers.py#L593
-
         Translate relative position to a bucket number for relative attention. The relative position is defined as
         memory_position - query_position, i.e. the distance in tokens from the attending position to the attended-to
         position. If bidirectional=False, then positive relative positions are invalid. We use smaller buckets for
         small absolute relative_position and larger buckets for larger absolute relative_positions. All relative
         positions >=max_distance map to the same bucket. All relative positions <=-max_distance map to the same bucket.
         This should allow for more graceful generalization to longer sequences than the model has been trained on
-
         Args:
             relative_position: an int32 Tensor
             bidirectional: a boolean - whether the attention is bidirectional
             num_buckets: an integer
             max_distance: an integer
-
         Returns:
             a Tensor with the same shape as relative_position, containing int32 values in the range [0, num_buckets)
         """
@@ -214,7 +212,6 @@ class T5Attention(nn.Module):
         query_len = query.size(1)
         key_len = key.size(1)
 
-        query = self.query_layer_norm(query)
         query = self.query_proj(query).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
         key = self.key_proj(key).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
         value = self.value_proj(value).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
@@ -248,7 +245,7 @@ class T5Decoder(nn.Module):
         super().__init__()
         self.config=config
         
-        self.embedding = embedding
+        self.word_embedding = embedding
         self.layers = nn.ModuleList(
             [T5DecoderLayer(config) for i in range(config.num_enc_layers)]
         )
@@ -259,74 +256,78 @@ class T5Decoder(nn.Module):
         self.fc = nn.Linear(config.d_model, config.vocab_size)
 
     def forward(self,
-                dec_input_ids,
+                input_ids,
+                attention_mask=None,
                 enc_outputs=None,
-                cross_attention_mask=None):
+                enc_attention_mask=None):
       
-        dec_attention_mask = dec_input_ids.ne(self.config.pad_token_id).int()
+        if attention_mask is None:
+            attention_mask = input_ids.ne(self.config.pad_token_id).int()
 
-        self_attention_mask = get_extended_attention_mask(dec_attention_mask, autoregressive=True)
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
 
-        dec_outputs = self.embedding(dec_input_ids)
+        outputs = self.word_embedding(input_ids)
       
         self_attn_probs, cross_attn_probs = [], []
         for i, layer in enumerate(self.layers):
-            dec_outputs, self_attn_prob, cross_attn_prob = layer(dec_outputs,
-                                                                 enc_outputs,
-                                                                 self_attention_mask,
-                                                                 cross_attention_mask,
-                                                                 )
+            outputs, self_attn_prob, cross_attn_prob = layer(outputs,
+                                                             self_attention_mask,
+                                                             enc_outputs,
+                                                             enc_attention_mask,
+                                                             )
             self_attn_probs.append(self_attn_prob)
             cross_attn_probs.append(cross_attn_prob)   
 
-        dec_outputs = self.final_layer_norm(dec_outputs)
-        dec_outputs = self.dropout(dec_outputs)
+        outputs = self.final_layer_norm(outputs)
+        outputs = self.dropout(outputs)
 
-        dec_outputs = self.fc(dec_outputs)
+        outputs = self.fc(outputs)
 
-        return dec_outputs, self_attn_probs, cross_attn_probs
+        return outputs, self_attn_probs, cross_attn_probs
 
 class T5DecoderLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         
+        self.self_attention_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.self_attention = T5Attention(config, has_relative_attention_bias=True, autoregressive=True)
+        
+        self.cross_attention_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.cross_attention = T5Attention(config, has_relative_attention_bias=False, autoregressive=False)
 
-        self.attention_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
-
+        self.feed_forward_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.feed_forward = PoswiseFeedForward(config)
 
     def forward(self,
-                dec_inputs,
-                enc_outputs,
+                inputs,
                 self_attention_mask,
+                enc_outputs,
                 cross_attention_mask,
                 ):
 
-        dec_outputs, self_attn_prob = self.self_attention(dec_inputs, dec_inputs, dec_inputs, self_attention_mask)
-        dec_outputs = dec_inputs + dec_outputs
+        normed_inputs = self.self_attention_norm(inputs)
+        outputs, self_attn_prob = self.self_attention(normed_inputs, normed_inputs, normed_inputs, self_attention_mask)
+        outputs = inputs + outputs
         
         # clamp inf values to enable fp16 training
-        if dec_outputs.dtype == torch.float16 and torch.isinf(dec_outputs).any():
-            clamp_value = torch.finfo(dec_outputs.dtype).max - 1000
-            dec_outputs = torch.clamp(dec_outputs, min=-clamp_value, max=clamp_value)
+        if outputs.dtype == torch.float16 and torch.isinf(outputs).any():
+            clamp_value = torch.finfo(outputs.dtype).max - 1000
+            outputs = torch.clamp(outputs, min=-clamp_value, max=clamp_value)
 
-        dec_inputs = dec_outputs
-        dec_outputs, cross_attn_prob = self.cross_attention(dec_inputs, enc_outputs, enc_outputs, cross_attention_mask)
+        inputs = outputs
+        normed_inputs = self.cross_attention_norm(inputs)
+        outputs, cross_attn_prob = self.cross_attention(normed_inputs, enc_outputs, enc_outputs, cross_attention_mask)
+        outputs = inputs + outputs
 
-        
-        if dec_outputs.dtype == torch.float16 and torch.isinf(dec_outputs).any():
-            clamp_value = torch.finfo(dec_outputs.dtype).max - 1000
-            dec_outputs = torch.clamp(dec_outputs, min=-clamp_value, max=clamp_value)
-        
-        dec_outputs = self.attention_layer_norm(dec_inputs + dec_outputs)
+        if outputs.dtype == torch.float16 and torch.isinf(outputs).any():
+            clamp_value = torch.finfo(outputs.dtype).max - 1000
+            outputs = torch.clamp(outputs, min=-clamp_value, max=clamp_value)
 
-        dec_inputs = dec_outputs
-        dec_outputs = self.feed_forward(dec_inputs)
-        dec_outputs = dec_inputs + dec_outputs
+        inputs = outputs
+        outputs = self.feed_forward(inputs)
+        outputs = inputs + outputs
 
-        return dec_outputs, self_attn_prob, cross_attn_prob    
+        return outputs, self_attn_prob, cross_attn_prob 
 
 class T5_Model(nn.Module):
     def __init__(self, config):
@@ -371,14 +372,16 @@ class T5_Model(nn.Module):
                 enc_input_ids,
                 enc_attention_mask=None,
                 dec_input_ids=None,
+                dec_attention_mask=None,
                 ):
 
-        enc_outputs, enc_self_attn_probs, enc_mask = self.encoder(enc_input_ids,
-                                                                  enc_attention_mask,
-                                                                  )
+        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(enc_input_ids,
+                                                                            enc_attention_mask,
+                                                                            )
         
-        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(dec_input_ids,
-                                                                              enc_outputs,
-                                                                              enc_mask)
+        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
+                                                                              attention_mask=dec_attention_mask,
+                                                                              enc_outputs=enc_outputs,
+                                                                              enc_attention_mask=enc_attention_mask)
 
         return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
