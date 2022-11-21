@@ -50,13 +50,12 @@ class MultiHeadAttention(nn.Module):
         self.scaled_dot_attn = ScaledDotProductAttention(config, self.d_head)
         self.fc = nn.Linear(self.d_head * self.num_att_heads, self.d_model)
 
-    def forward(
-        self, 
-        query, 
-        key=None, 
-        value=None, 
-        attention_mask=None,
-        ):
+    def forward(self, 
+                query, 
+                key=None, 
+                value=None, 
+                attention_mask=None,
+                ):
         
         if key is None and value is None:
             key = value = query
