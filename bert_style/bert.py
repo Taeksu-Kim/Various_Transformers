@@ -118,7 +118,11 @@ class BertEncoderLayer(nn.Module):
         self_attention_mask,
         ):
 
-        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
+        outputs, self_attn_prob = self.self_attention(query=inputs, 
+                                                      key=None, 
+                                                      value=None, 
+                                                      attention_mask=self_attention_mask,
+                                                      )
         outputs = self.attention_norm(inputs + outputs)
 
         inputs = outputs
@@ -147,11 +151,14 @@ class BertAttention(nn.Module):
 
     def forward(self,
                 query,
-                key,
-                value,
-                attention_mask,
+                key=None,
+                value=None,
+                attention_mask=None,
                 ):
-      
+
+        if key is None and value is None:
+            key = value = query
+
         batch_size = query.size(0)
 
         query = self.query_proj(query).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
@@ -251,11 +258,19 @@ class BertDecoderLayer(nn.Module):
                 cross_attention_mask,
                 ):
 
-        outputs, self_attn_prob = self.self_attention(inputs, inputs, inputs, self_attention_mask)
+        outputs, self_attn_prob = self.self_attention(query=inputs, 
+                                                      key=None, 
+                                                      value=None, 
+                                                      attention_mask=self_attention_mask,
+                                                      )
         outputs = self.self_attention_norm(inputs + outputs)
 
         inputs = outputs
-        outputs, cross_attn_prob = self.cross_attention(inputs, enc_outputs, enc_outputs, cross_attention_mask)
+        outputs, cross_attn_prob = self.cross_attention(query=inputs, 
+                                                        key=enc_outputs, 
+                                                        value=enc_outputs, 
+                                                        attention_mask=cross_attention_mask,
+                                                        )
         outputs = self.cross_attention_norm(inputs + outputs)
 
         inputs = outputs
