@@ -100,9 +100,11 @@ class T5EncoderLayer(nn.Module):
                 inputs, 
                 self_attention_mask):
 
-        normed_inputs = self.self_attention_norm(inputs)
-        outputs, self_attn_prob = self.self_attention(normed_inputs, normed_inputs, normed_inputs, self_attention_mask)
-        
+        outputs, self_attn_prob = self.self_attention(query=self.self_attention_norm(inputs), 
+                                                      key=None, 
+                                                      value=None, 
+                                                      attention_mask=self_attention_mask,
+                                                      )        
         outputs = inputs + outputs
 
         inputs = outputs
@@ -203,10 +205,13 @@ class T5Attention(nn.Module):
 
     def forward(self,
                 query,
-                key,
-                value,
-                attn_mask,
+                key=None,
+                value=None,
+                attention_mask=None,
                 ):
+      
+        if key is None and value is None:
+            key = value = query
       
         batch_size = query.size(0)
         query_len = query.size(1)
@@ -225,7 +230,7 @@ class T5Attention(nn.Module):
         else:
             position_bias = self.compute_bias(query_len, key_len)
 
-        position_bias = position_bias + attn_mask
+        position_bias = position_bias + attention_mask
         
         scores = scores + position_bias
         
@@ -305,8 +310,11 @@ class T5DecoderLayer(nn.Module):
                 cross_attention_mask,
                 ):
 
-        normed_inputs = self.self_attention_norm(inputs)
-        outputs, self_attn_prob = self.self_attention(normed_inputs, normed_inputs, normed_inputs, self_attention_mask)
+        outputs, self_attn_prob = self.self_attention(query=self.self_attention_norm(inputs), 
+                                                      key=None, 
+                                                      value=None, 
+                                                      attention_mask=self_attention_mask,
+                                                      )
         outputs = inputs + outputs
         
         # clamp inf values to enable fp16 training
@@ -315,8 +323,11 @@ class T5DecoderLayer(nn.Module):
             outputs = torch.clamp(outputs, min=-clamp_value, max=clamp_value)
 
         inputs = outputs
-        normed_inputs = self.cross_attention_norm(inputs)
-        outputs, cross_attn_prob = self.cross_attention(normed_inputs, enc_outputs, enc_outputs, cross_attention_mask)
+        outputs, cross_attn_prob = self.cross_attention(query=self.cross_attention_norm(inputs), 
+                                                        key=enc_outputs, 
+                                                        value=enc_outputs, 
+                                                        attention_mask=cross_attention_mask,
+                                                        )
         outputs = inputs + outputs
 
         if outputs.dtype == torch.float16 and torch.isinf(outputs).any():
