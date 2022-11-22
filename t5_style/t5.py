@@ -51,6 +51,24 @@ class T5LayerNorm(nn.Module):
             hidden_states = hidden_states.to(torch.float16)
         return self.weight * hidden_states
 
+class T5Embeddings(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+
+        self.dropout = nn.Dropout(config.drop_out_raito)
+
+    def forward(
+        self, 
+        input_ids=None, 
+        ):
+        
+        embeddings = self.word_embeddings(input_ids)
+        embeddings = self.dropout(embeddings)
+        
+        return embeddings
+
 class T5_Model(nn.Module):
     def __init__(self, config):
       super().__init__()
@@ -111,7 +129,7 @@ class T5_Model(nn.Module):
 class T5Encoder(nn.Module):
     def __init__(self, config, embedding):
         super().__init__()
-        self.word_embedding = embedding
+        self.embedding = embedding
         self.layers = nn.ModuleList(
             [T5EncoderLayer(config) for i in range(config.num_enc_layers)]
         )
@@ -129,7 +147,7 @@ class T5Encoder(nn.Module):
 
         self_attention_mask = get_extended_attention_mask(attention_mask)
 
-        outputs = self.word_embedding(input_ids)
+        outputs = self.embedding(input_ids)
       
         self_attn_probs = []
         for i, layer in enumerate(self.layers):
@@ -307,7 +325,7 @@ class T5Decoder(nn.Module):
         super().__init__()
         self.config=config
         
-        self.word_embedding = embedding
+        self.embedding = embedding
         self.layers = nn.ModuleList(
             [T5DecoderLayer(config) for i in range(config.num_enc_layers)]
         )
@@ -328,7 +346,7 @@ class T5Decoder(nn.Module):
 
         self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
 
-        outputs = self.word_embedding(input_ids)
+        outputs = self.embedding(input_ids)
       
         self_attn_probs, cross_attn_probs = [], []
         for i, layer in enumerate(self.layers):
@@ -395,4 +413,4 @@ class T5DecoderLayer(nn.Module):
         outputs = self.feed_forward(inputs)
         outputs = inputs + outputs
 
-        return outputs, self_attn_prob, cross_attn_prob 
+        return outputs, self_attn_prob, cross_attn_prob
