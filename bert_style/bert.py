@@ -67,7 +67,26 @@ class BertEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         
         return embeddings
-    
+
+class BertModel(nn.Module):
+    def __init__(self, config):
+      super().__init__()
+      self.embedding = BertEmbeddings(config)
+      self.encoder = BertEncoder(config, self.embedding)
+
+    def forward(self,
+                input_ids,
+                token_type_ids=None,
+                attention_mask=None,
+                ):
+
+      outputs, self_attn_probs, _ = self.encoder(input_ids=input_ids,
+                                                 token_type_ids=token_type_ids,
+                                                 attention_mask=attention_mask,
+                                                 )
+      
+      return outputs, self_attn_probs
+
 class BertEncoder(nn.Module):
     def __init__(self, config, embedding):
         super().__init__()
@@ -178,25 +197,6 @@ class BertAttention(nn.Module):
         context = self.context_dropout(context)
 
         return context, attn_prob
-
-class BertModel(nn.Module):
-    def __init__(self, config):
-      super().__init__()
-      self.embedding = BertEmbeddings(config)
-      self.encoder = BertEncoder(config, self.embedding)
-
-    def forward(self,
-                input_ids,
-                token_type_ids=None,
-                attention_mask=None,
-                ):
-
-      outputs, self_attn_probs, _ = self.encoder(input_ids=input_ids,
-                                                 token_type_ids=token_type_ids,
-                                                 attention_mask=attention_mask,
-                                                 )
-      
-      return outputs, self_attn_probs
 
 class BertDecoder(nn.Module):
     def __init__(self, config, embedding):
