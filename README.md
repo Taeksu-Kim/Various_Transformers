@@ -10,7 +10,5 @@
 - Bert Style
 - GPT1 Style
 - GPT2 Style
-
-
-## 작업 중
 - T5 Style
+
