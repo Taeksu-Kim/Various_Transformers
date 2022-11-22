@@ -82,11 +82,11 @@ class GPT2Embeddings(nn.Module):
 
         position_ids = self.position_ids[:, :seq_len].to(device)
 
-        inputs_embeds = self.word_embeddings(input_ids)
+        word_embeds = self.word_embeddings(input_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
         position_embeddings = self.position_embeddings(position_ids)
         
-        embeddings = inputs_embeds + token_type_embeddings + position_embeddings
+        embeddings = word_embeds + token_type_embeddings + position_embeddings
         
         embeddings = self.dropout(embeddings)
         
