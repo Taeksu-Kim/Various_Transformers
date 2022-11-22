@@ -2,20 +2,6 @@ import math
 import torch
 import torch.nn as nn
 
-def PositionalEncoding(max_seq_len, d_model):
-    '''
-    PE_(pos, 2i)   =  sin(pos / power(10000, 2i / d_model))
-    PE_(pos, 2i+1) =  cos(pos / power(10000, 2i / d_model))
-    '''
-    pe = torch.zeros([max_seq_len, d_model])
-    position = torch.arange(max_seq_len).unsqueeze(1).repeat(1, d_model) # pos, [seq_len, d_model]
-    div_value = torch.pow(10000, torch.arange(0, d_model, 2) / d_model) # power(10000, 2i / d_model)
-    pe[:, 0::2] = torch.sin(position[:, 0::2] / div_value) # sin for 2i
-    pe[:, 1::2] = torch.cos(position[:, 1::2] / div_value) # cos for 2i+1
-    pe = pe.unsqueeze(0) # [bs(1), seq_len, d_model]
-    
-    return pe
-
 def get_extended_attention_mask(attention_mask, autoregressive=False):
 
     dtype = torch.float16
@@ -34,62 +20,19 @@ def get_extended_attention_mask(attention_mask, autoregressive=False):
     extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(dtype).min
     return extended_attention_mask
 
-class MultiHeadAttention(nn.Module):
-    def __init__(self, config):
-        super(MultiHeadAttention, self).__init__()
-        self.d_model = config.d_model
-        self.num_att_heads = config.num_att_heads
-        assert self.d_model % self.num_att_heads == 0, "d_model({}) % num_att_heads({}) = {}. It should be 0.".format(self.d_model, self.num_att_heads, self.d_model % self.num_att_heads)
-        
-        self.d_head = int(self.d_model / self.num_att_heads)
-        
-        self.query_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
-        self.key_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
-        self.value_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
-
-        self.scaled_dot_attn = ScaledDotProductAttention(config, self.d_head)
-        self.fc = nn.Linear(self.d_head * self.num_att_heads, self.d_model)
-
-    def forward(self, 
-                query, 
-                key=None, 
-                value=None, 
-                attention_mask=None,
-                ):
-        
-        if key is None and value is None:
-            key = value = query
-
-        batch_size = query.size(0)
-
-        query = self.query_proj(query).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
-        key = self.key_proj(key).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
-        value = self.value_proj(value).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
-
-        context, attn_prob = self.scaled_dot_attn(query, key, value, attention_mask)
-
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
-        
-        output = self.fc(context)
-        
-        return output, attn_prob
-
-class ScaledDotProductAttention(nn.Module):
-    def __init__(self, config, d_head):
-        super(ScaledDotProductAttention, self).__init__()
-        self.config = config
-        self.scale = d_head ** 0.5
-
-    def forward(self, query, key, value, attention_mask):
-
-        scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]
-        
-        scores = scores + attention_mask
-        
-        attn_prob = nn.Softmax(dim=-1)(scores)
-        context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
-                                                  
-        return context, attn_prob
+def PositionalEncoding(max_seq_len, d_model):
+    '''
+    PE_(pos, 2i)   =  sin(pos / power(10000, 2i / d_model))
+    PE_(pos, 2i+1) =  cos(pos / power(10000, 2i / d_model))
+    '''
+    pe = torch.zeros([max_seq_len, d_model])
+    position = torch.arange(max_seq_len).unsqueeze(1).repeat(1, d_model) # pos, [seq_len, d_model]
+    div_value = torch.pow(10000, torch.arange(0, d_model, 2) / d_model) # power(10000, 2i / d_model)
+    pe[:, 0::2] = torch.sin(position[:, 0::2] / div_value) # sin for 2i
+    pe[:, 1::2] = torch.cos(position[:, 1::2] / div_value) # cos for 2i+1
+    pe = pe.unsqueeze(0) # [bs(1), seq_len, d_model]
+    
+    return pe
 
 class PoswiseFeedForward(nn.Module):
     def __init__(self, config):
@@ -103,6 +46,56 @@ class PoswiseFeedForward(nn.Module):
 
     def forward(self, inputs):
         return self.feed_forward(inputs)
+
+class Transformer(nn.Module):
+    def __init__(self, config):
+        super(Transformer, self).__init__()
+        self.config = config
+        self.encoder = TransformerEncoder(config)
+        if config.use_decoder == True:
+            self.decoder = TransformerDecoder(config)
+        
+        self.init_weights()
+
+    def init_weights(self):
+        # Initialize weights for each layer
+        self.apply(self.init_layer_weights)
+
+    # ref huggingface
+    # https://huggingface.co/transformers/v4.9.2/_modules/transformers/models/electra/modeling_electra.html#ElectraPreTrainedModel
+    def init_layer_weights(self, module):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+            module.eps = self.config.layer_norm_eps
+
+    def forward(self, 
+                enc_input_ids, 
+                dec_input_ids=None, 
+                enc_attention_mask=None,
+                dec_attention_mask=None,
+                ):
+        
+        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(input_ids=enc_input_ids, 
+                                                                            attention_mask=enc_attention_mask)
+        
+        if self.config.use_decoder == False:
+            return enc_outputs, enc_self_attn_probs
+        
+        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
+                                                                              attention_mask=dec_attention_mask,
+                                                                              enc_outputs=enc_outputs, 
+                                                                              enc_attention_mask=enc_attention_mask)
+        
+        return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
 
 class TransformerEncoder(nn.Module):
     def __init__(self, config):
@@ -167,6 +160,63 @@ class TransformerEncoderLayer(nn.Module):
         outputs = self.feed_forward_norm(inputs + outputs)
         
         return outputs, self_attn_prob
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, config):
+        super(MultiHeadAttention, self).__init__()
+        self.d_model = config.d_model
+        self.num_att_heads = config.num_att_heads
+        assert self.d_model % self.num_att_heads == 0, "d_model({}) % num_att_heads({}) = {}. It should be 0.".format(self.d_model, self.num_att_heads, self.d_model % self.num_att_heads)
+        
+        self.d_head = int(self.d_model / self.num_att_heads)
+        
+        self.query_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
+        self.key_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
+        self.value_proj = nn.Linear(self.d_model, self.num_att_heads * self.d_head)
+
+        self.scaled_dot_attn = ScaledDotProductAttention(config, self.d_head)
+        self.fc = nn.Linear(self.d_head * self.num_att_heads, self.d_model)
+
+    def forward(self, 
+                query, 
+                key=None, 
+                value=None, 
+                attention_mask=None,
+                ):
+        
+        if key is None and value is None:
+            key = value = query
+
+        batch_size = query.size(0)
+
+        query = self.query_proj(query).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
+        key = self.key_proj(key).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
+        value = self.value_proj(value).view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
+
+        context, attn_prob = self.scaled_dot_attn(query, key, value, attention_mask)
+
+        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
+        
+        output = self.fc(context)
+        
+        return output, attn_prob
+
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, config, d_head):
+        super(ScaledDotProductAttention, self).__init__()
+        self.config = config
+        self.scale = d_head ** 0.5
+
+    def forward(self, query, key, value, attention_mask):
+
+        scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]
+        
+        scores = scores + attention_mask
+        
+        attn_prob = nn.Softmax(dim=-1)(scores)
+        context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
+                                                  
+        return context, attn_prob
 
 class TransformerDecoder(nn.Module):
     def __init__(self, config):
@@ -254,53 +304,3 @@ class TransformerDecoderLayer(nn.Module):
         outputs = self.feed_forward_norm(inputs + outputs)
 
         return outputs, self_attn_prob, cross_attn_prob
-
-class Transformer(nn.Module):
-    def __init__(self, config):
-        super(Transformer, self).__init__()
-        self.config = config
-        self.encoder = TransformerEncoder(config)
-        if config.use_decoder == True:
-            self.decoder = TransformerDecoder(config)
-        
-        self.init_weights()
-
-    def init_weights(self):
-        # Initialize weights for each layer
-        self.apply(self.init_layer_weights)
-
-    # ref huggingface
-    # https://huggingface.co/transformers/v4.9.2/_modules/transformers/models/electra/modeling_electra.html#ElectraPreTrainedModel
-    def init_layer_weights(self, module):
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-            module.eps = self.config.layer_norm_eps
-
-    def forward(self, 
-                enc_input_ids, 
-                dec_input_ids=None, 
-                enc_attention_mask=None,
-                dec_attention_mask=None,
-                ):
-        
-        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(input_ids=enc_input_ids, 
-                                                                            attention_mask=enc_attention_mask)
-        
-        if self.config.use_decoder == False:
-            return enc_outputs, enc_self_attn_probs
-        
-        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
-                                                                              attention_mask=dec_attention_mask,
-                                                                              enc_outputs=enc_outputs, 
-                                                                              enc_attention_mask=enc_attention_mask)
-        
-        return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
