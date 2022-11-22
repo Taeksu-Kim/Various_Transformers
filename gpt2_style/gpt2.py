@@ -54,53 +54,6 @@ class PoswiseFeedForward(nn.Module):
     def forward(self, inputs):
         return self.feed_forward(inputs)
 
-class GPT2Attention(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-
-        self.d_model = config.d_model
-        self.num_att_heads = config.num_att_heads
-        assert self.d_model % self.num_att_heads == 0, "d_model({}) % num_att_heads({}) = {}. It should be 0.".format(self.d_model, self.num_att_heads, self.d_model % self.num_att_heads)
-        self.d_head = int(self.d_model / self.num_att_heads)
-        self.scale = self.d_head ** 0.5
-
-        self.conv_layer = Conv1D(self.d_model * 3, self.d_model)
-        self.attn_dropout = nn.Dropout(config.drop_out_raito)
-        
-        self.fc = Conv1D(self.d_model, self.d_model)
-        self.context_dropout = nn.Dropout(config.drop_out_raito)
-
-    def forward(self,
-                query,
-                key=None,
-                value=None,
-                attention_mask=None,
-                ):
-
-        if key is None and value is None:
-            query = self.conv_layer(query)
-            query, key, value = query.split(self.d_model, dim=2)
-
-        batch_size = query.size(0)
-
-        query =  query.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
-        key = key.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
-        value = value.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
-
-        scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]        
-        scores = scores + attention_mask
-        
-        attn_prob = nn.Softmax(dim=-1)(scores)
-        attn_prob = self.attn_dropout(attn_prob)
-
-        context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
-        
-        context = self.fc(context)
-        context = self.context_dropout(context)
-
-        return context, attn_prob
-
 class GPT2Decoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -184,3 +137,50 @@ class GPT2DecoderLayer(nn.Module):
         outputs = inputs + outputs
         
         return outputs, self_attn_prob
+
+class GPT2Attention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.d_model = config.d_model
+        self.num_att_heads = config.num_att_heads
+        assert self.d_model % self.num_att_heads == 0, "d_model({}) % num_att_heads({}) = {}. It should be 0.".format(self.d_model, self.num_att_heads, self.d_model % self.num_att_heads)
+        self.d_head = int(self.d_model / self.num_att_heads)
+        self.scale = self.d_head ** 0.5
+
+        self.conv_layer = Conv1D(self.d_model * 3, self.d_model)
+        self.attn_dropout = nn.Dropout(config.drop_out_raito)
+        
+        self.fc = Conv1D(self.d_model, self.d_model)
+        self.context_dropout = nn.Dropout(config.drop_out_raito)
+
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                attention_mask=None,
+                ):
+
+        if key is None and value is None:
+            query = self.conv_layer(query)
+            query, key, value = query.split(self.d_model, dim=2)
+
+        batch_size = query.size(0)
+
+        query =  query.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, query_len, d_head]
+        key = key.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, key_len, d_head]
+        value = value.view(batch_size, -1, self.num_att_heads, self.d_head).transpose(1,2) # [bs, num_heads, value_len, d_head]
+
+        scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale # [bs, num_heads, query_len, key_len]        
+        scores = scores + attention_mask
+        
+        attn_prob = nn.Softmax(dim=-1)(scores)
+        attn_prob = self.attn_dropout(attn_prob)
+
+        context = torch.matmul(attn_prob, value) # [bs, num_heads, query_len, d_head]
+        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_att_heads * self.d_head)
+        
+        context = self.fc(context)
+        context = self.context_dropout(context)
+
+        return context, attn_prob
