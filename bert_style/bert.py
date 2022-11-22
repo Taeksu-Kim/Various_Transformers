@@ -73,9 +73,9 @@ class BertEmbeddings(nn.Module):
 
 class BertModel(nn.Module):
     def __init__(self, config):
-      super().__init__()
-      self.embedding = BertEmbeddings(config)
-      self.encoder = BertEncoder(config, self.embedding)
+        super().__init__()
+        self.embedding = BertEmbeddings(config)
+        self.encoder = BertEncoder(config, self.embedding)
 
         self.init_weights()
 
