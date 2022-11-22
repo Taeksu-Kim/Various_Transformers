@@ -11,4 +11,4 @@
 - 모든 Linear에 bias=False이 적용되어 있음
 - Add&Norm 방식이 GPT2와 유사하게 residual에는 layer_norm이 적용이 되지 않도록 돼있음. GPT2와 달리 T5는 Cross attention이 있고, Self attention에는 query, key, value 모두 layer_norm을 통과한 값을 사용하지만 Cross attention에서는 key, value로 layer_norm을 통과하지 않은 값을 사용하는 점에서 구조적 차이가 있음.
 
-- songys  Chatbot data로 pretrain 없이 학습시켰을 때 거의 학습이 되지 않음. 구현상의 미스인가 해서 허깅페이스 T5로 돌려보더라도 마찬가지 결과. 바닐라 트랜스포머나 Bert의 경우에는 pretrain 없이도 어느정도 학습이 됐었음. position embedding의 차이 혹은 데이터의 길이가 너무 짧아서 그런것으로 보임.
+- 적절한 prefix를 추가하여 사용(더 깊게 알아봐야할 듯)
