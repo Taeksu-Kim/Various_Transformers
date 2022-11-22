@@ -20,6 +20,19 @@ def get_extended_attention_mask(attention_mask, autoregressive=False):
     extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(dtype).min
     return extended_attention_mask
 
+class PoswiseFeedForward(nn.Module):
+    def __init__(self, config):
+        super().__init__()      
+
+        self.feed_forward = nn.Sequential(nn.Linear(config.d_model, config.feed_forward_dim),
+                                          nn.Dropout(config.drop_out_raito),
+                                          nn.ReLU(),
+                                          nn.Linear(config.feed_forward_dim, config.d_model),
+                                          nn.Dropout(config.drop_out_raito))
+
+    def forward(self, inputs):
+        return self.feed_forward(inputs)
+
 def PositionalEncoding(max_seq_len, d_model):
     '''
     PE_(pos, 2i)   =  sin(pos / power(10000, 2i / d_model))
@@ -34,26 +47,41 @@ def PositionalEncoding(max_seq_len, d_model):
     
     return pe
 
-class PoswiseFeedForward(nn.Module):
+class TransformerEmbedding(nn.Module):
     def __init__(self, config):
-        super(PoswiseFeedForward, self).__init__()      
+        super().__init__()      
+        self.config = config
+        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+        self.sqrt_dim = math.sqrt(config.d_model)
+        self.pos_encoding = PositionalEncoding(config.max_position_embeddings, config.d_model)
+        
+    def forward(self, input_ids):
+        
+        batch_size, seq_len = input_ids.size()
+        
+        word_embeds = self.word_embedding(input_ids) * self.sqrt_dim
+        position_embeds = self.pos_encoding[:, :seq_len].to(input_ids.device)
 
-        self.feed_forward = nn.Sequential(nn.Linear(config.d_model, config.feed_forward_dim),
-                                          nn.Dropout(config.drop_out_raito),
-                                          nn.ReLU(),
-                                          nn.Linear(config.feed_forward_dim, config.d_model),
-                                          nn.Dropout(config.drop_out_raito))
-
-    def forward(self, inputs):
-        return self.feed_forward(inputs)
+        embeds = word_embeds + position_embeds
+      
+        return embeds
 
 class Transformer(nn.Module):
     def __init__(self, config):
-        super(Transformer, self).__init__()
+        super().__init__()
         self.config = config
-        self.encoder = TransformerEncoder(config)
-        if config.use_decoder == True:
-            self.decoder = TransformerDecoder(config)
+        
+        if config.share_embedding is True:
+            self.shared_embedding = TransformerEmbedding(config)
+            self.encoder = TransformerEncoder(config, self.shared_embedding)
+            self.decoder = TransformerDecoder(config, self.shared_embedding)
+        
+        else:
+            self.encoder_embedding = TransformerEmbedding(config)
+            self.decoder_embedding = TransformerEmbedding(config)
+    
+            self.encoder = TransformerEncoder(config, self.encoder_embedding)
+            self.decoder = TransformerDecoder(config, self.decoder_embedding)
         
         self.init_weights()
 
@@ -87,9 +115,6 @@ class Transformer(nn.Module):
         enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(input_ids=enc_input_ids, 
                                                                             attention_mask=enc_attention_mask)
         
-        if self.config.use_decoder == False:
-            return enc_outputs, enc_self_attn_probs
-        
         dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
                                                                               attention_mask=dec_attention_mask,
                                                                               enc_outputs=enc_outputs, 
@@ -98,12 +123,10 @@ class Transformer(nn.Module):
         return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, config):
-        super(TransformerEncoder, self).__init__()
+    def __init__(self, config, embedding):
+        super().__init__()
         self.config = config
-        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-        self.sqrt_dim = math.sqrt(config.d_model)
-        self.pos_encoding = PositionalEncoding(config.max_position_embeddings, config.d_model)
+        self.embedding = embedding
 
         self.layers = nn.ModuleList(
             [TransformerEncoderLayer(config) for _ in range(config.num_enc_layers)]
@@ -115,18 +138,13 @@ class TransformerEncoder(nn.Module):
         attention_mask=None,
         ):
 
-        batch_size, seq_len = input_ids.size()
-
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
 
-        word_embeds = self.word_embedding(input_ids) * self.sqrt_dim
-        position_embeds = self.pos_encoding[:, :seq_len].to(input_ids.device)
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=False)
 
-        outputs = word_embeds + position_embeds
-
-        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=False)    
-
+        outputs = self.embedding(input_ids)
+    
         self_attn_probs = []
         for layer in self.layers:
             outputs, self_attn_prob = layer(outputs, 
@@ -138,7 +156,7 @@ class TransformerEncoder(nn.Module):
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, config):
-        super(TransformerEncoderLayer, self).__init__()
+        super().__init__()
         
         self.self_attention = MultiHeadAttention(config)
         self.attention_norm = nn.LayerNorm(config.d_model)
@@ -163,7 +181,7 @@ class TransformerEncoderLayer(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
-        super(MultiHeadAttention, self).__init__()
+        super().__init__()
         self.d_model = config.d_model
         self.num_att_heads = config.num_att_heads
         assert self.d_model % self.num_att_heads == 0, "d_model({}) % num_att_heads({}) = {}. It should be 0.".format(self.d_model, self.num_att_heads, self.d_model % self.num_att_heads)
@@ -203,7 +221,7 @@ class MultiHeadAttention(nn.Module):
 
 class ScaledDotProductAttention(nn.Module):
     def __init__(self, config, d_head):
-        super(ScaledDotProductAttention, self).__init__()
+        super().__init__()
         self.config = config
         self.scale = d_head ** 0.5
 
@@ -219,12 +237,10 @@ class ScaledDotProductAttention(nn.Module):
         return context, attn_prob
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, config):
-        super(TransformerDecoder, self).__init__()
+    def __init__(self, config, embedding):
+        super().__init__()
         self.config = config
-        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-        self.sqrt_dim = math.sqrt(config.d_model)
-        self.pos_encoding = PositionalEncoding(config.max_position_embeddings, config.d_model)
+        self.embedding = embedding
 
         self.layers = nn.ModuleList(
             [TransformerDecoderLayer(config) for _ in range(config.num_dec_layers)]
@@ -238,17 +254,12 @@ class TransformerDecoder(nn.Module):
                 enc_outputs=None,
                 enc_attention_mask=None):
 
-        batch_size, seq_len = input_ids.size()
-
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
-
-        word_embeds = self.word_embedding(input_ids) * self.sqrt_dim
-        position_embeds = self.pos_encoding[:, :seq_len].to(input_ids.device)
-
-        outputs = word_embeds + position_embeds
-
+        
         self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True) 
+
+        outputs = self.embedding(input_ids)
 
         self_attn_probs, cross_attn_probs = [], []
         for layer in self.layers:
@@ -266,7 +277,7 @@ class TransformerDecoder(nn.Module):
 
 class TransformerDecoderLayer(nn.Module):
     def __init__(self, config):
-        super(TransformerDecoderLayer, self).__init__()
+        super().__init__()
 
         self.self_attention = MultiHeadAttention(config)
         self.self_attention_norm = nn.LayerNorm(config.d_model)
