@@ -8,6 +8,9 @@
 ## 작업 완료
 - Original Transformer   
 - Bert Style
-- T5 Style
 - GPT1 Style
 - GPT2 Style
+
+
+## 작업 중
+- T5 Style
