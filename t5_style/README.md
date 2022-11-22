@@ -10,5 +10,3 @@
 - Feedforward의 Activation function을 gelu로 사용한 Bert와 달리 Transformer와 같이 relu 사용 
 - 모든 Linear에 bias=False이 적용되어 있음
 - Add&Norm 방식이 GPT2와 유사하게 residual에는 layer_norm이 적용이 되지 않도록 돼있음. GPT2와 달리 T5는 Cross attention이 있고, Self attention에는 query, key, value 모두 layer_norm을 통과한 값을 사용하지만 Cross attention에서는 key, value로 layer_norm을 통과하지 않은 값을 사용하는 점에서 구조적 차이가 있음.
-
-- 적절한 prefix를 추가하여 사용(더 깊게 알아봐야할 듯)
