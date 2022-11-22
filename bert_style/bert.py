@@ -74,6 +74,8 @@ class BertEmbeddings(nn.Module):
 class BertModel(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
+
         self.embedding = BertEmbeddings(config)
         self.encoder = BertEncoder(config, self.embedding)
 
