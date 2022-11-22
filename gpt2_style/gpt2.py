@@ -54,25 +54,99 @@ class PoswiseFeedForward(nn.Module):
     def forward(self, inputs):
         return self.feed_forward(inputs)
 
-class GPT2Decoder(nn.Module):
+class GPT2Embeddings(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings."""
+
     def __init__(self, config):
+        super().__init__()
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.d_model)
+        self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.d_model)
+
+        self.dropout = nn.Dropout(config.drop_out_raito)
+
+        self.position_ids = torch.arange(config.max_position_embeddings).expand((1, -1))
+
+    def forward(
+        self, 
+        input_ids=None, 
+        token_type_ids=None, 
+        position_ids=None,
+        ):
+        
+        batch_size, seq_len = input_ids.size()
+        device = input_ids.device
+
+        if token_type_ids is None:
+            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=device)
+
+        position_ids = self.position_ids[:, :seq_len].to(device)
+
+        inputs_embeds = self.word_embeddings(input_ids)
+        token_type_embeddings = self.token_type_embeddings(token_type_ids)
+        position_embeddings = self.position_embeddings(position_ids)
+        
+        embeddings = inputs_embeds + token_type_embeddings + position_embeddings
+        
+        embeddings = self.dropout(embeddings)
+        
+        return embeddings
+
+class GPT2Model(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.embedding = GPT2Embeddings(config)
+        self.decoder = GPT2Decoder(config, self.embedding)
+
+        self.init_weights()
+
+    def init_weights(self):
+        # Initialize weights for each layer
+        self.apply(self.init_layer_weights)
+
+    # ref huggingface
+    # https://huggingface.co/transformers/v4.9.2/_modules/transformers/models/electra/modeling_electra.html#ElectraPreTrainedModel
+    def init_layer_weights(self, module):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+            module.eps = self.config.layer_norm_eps
+
+    def forward(self,
+                input_ids,
+                token_type_ids=None,
+                attention_mask=None,
+                ):
+      
+        outputs, self_attn_probs = self.decoder(input_ids,
+                                                token_type_ids,
+                                                attention_mask,
+                                                )
+
+        return outputs, self_attn_probs
+
+class GPT2Decoder(nn.Module):
+    def __init__(self, config, embedding):
         super().__init__()
 
         self.config = config
-
-        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
-        self.position_ids = torch.arange(config.max_position_embeddings).expand((1, -1))
-        self.position_embedding = nn.Embedding(config.max_position_embeddings, config.d_model)
-        self.dropout = nn.Dropout(config.drop_out_raito)
-        
+        self.embedding = embedding
+       
         self.layers = nn.ModuleList(
             [GPT2DecoderLayer(config) for i in range(config.num_dec_layers)]
         )
         
         self.layer_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.fc = nn.Linear(config.d_model, config.vocab_size, bias=False)
-
-        # self.init_weights()
 
     def forward(
         self,
@@ -86,19 +160,10 @@ class GPT2Decoder(nn.Module):
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
 
-        if token_type_ids is None:
-            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=input_ids.device)
-
-        position_ids = self.position_ids[:, :seq_len].to(input_ids.device)
-
-        word_embeds = self.word_embedding(input_ids)
-        token_type_embeds = self.word_embedding(token_type_ids)
-        position_embeds = self.position_embedding(position_ids)
-
-        outputs = word_embeds + token_type_embeds + position_embeds
-        outputs = self.dropout(outputs)
-
         self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
+
+        outputs = self.embedding(input_ids,
+                                 token_type_ids=token_type_ids)
 
         self_attn_probs = []
         for i, layer in enumerate(self.layers):
