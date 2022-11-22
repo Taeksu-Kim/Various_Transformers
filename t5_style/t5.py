@@ -51,6 +51,63 @@ class T5LayerNorm(nn.Module):
             hidden_states = hidden_states.to(torch.float16)
         return self.weight * hidden_states
 
+class T5_Model(nn.Module):
+    def __init__(self, config):
+      super().__init__()
+      self.config=config
+
+      if config.share_embedding is True:
+          self.shared_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+          self.encoder = T5Encoder(config, self.shared_embedding)
+          self.decoder = T5Decoder(config, self.shared_embedding)
+      
+      else:
+          self.encoder_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+          self.decoder_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+  
+          self.encoder = T5Encoder(config, self.encoder_embedding)
+          self.decoder = T5Decoder(config, self.decoder_embedding)
+
+      self.init_weights()
+
+    def init_weights(self):
+        # Initialize weights for each layer
+        self.apply(self.init_layer_weights)
+
+    # ref huggingface
+    # https://huggingface.co/transformers/v4.9.2/_modules/transformers/models/electra/modeling_electra.html#ElectraPreTrainedModel
+    def init_layer_weights(self, module):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+            module.eps = self.config.layer_norm_eps
+
+    def forward(self,
+                enc_input_ids,
+                enc_attention_mask=None,
+                dec_input_ids=None,
+                dec_attention_mask=None,
+                ):
+
+        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(enc_input_ids,
+                                                                            enc_attention_mask,
+                                                                            )
+        
+        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
+                                                                              attention_mask=dec_attention_mask,
+                                                                              enc_outputs=enc_outputs,
+                                                                              enc_attention_mask=enc_attention_mask)
+
+        return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
+
 class T5Encoder(nn.Module):
     def __init__(self, config, embedding):
         super().__init__()
@@ -339,60 +396,3 @@ class T5DecoderLayer(nn.Module):
         outputs = inputs + outputs
 
         return outputs, self_attn_prob, cross_attn_prob 
-
-class T5_Model(nn.Module):
-    def __init__(self, config):
-      super().__init__()
-      self.config=config
-
-      if config.share_embedding is True:
-          self.shared_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-          self.encoder = T5Encoder(config, self.shared_embedding)
-          self.decoder = T5Decoder(config, self.shared_embedding)
-      
-      else:
-          self.encoder_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-          self.decoder_embedding = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-  
-          self.encoder = T5Encoder(config, self.encoder_embedding)
-          self.decoder = T5Decoder(config, self.decoder_embedding)
-
-      self.init_weights()
-
-    def init_weights(self):
-        # Initialize weights for each layer
-        self.apply(self.init_layer_weights)
-
-    # ref huggingface
-    # https://huggingface.co/transformers/v4.9.2/_modules/transformers/models/electra/modeling_electra.html#ElectraPreTrainedModel
-    def init_layer_weights(self, module):
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.init_std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-            module.eps = self.config.layer_norm_eps
-
-    def forward(self,
-                enc_input_ids,
-                enc_attention_mask=None,
-                dec_input_ids=None,
-                dec_attention_mask=None,
-                ):
-
-        enc_outputs, enc_self_attn_probs, enc_attention_mask = self.encoder(enc_input_ids,
-                                                                            enc_attention_mask,
-                                                                            )
-        
-        dec_outputs, dec_self_attn_probs, dec_cross_attn_probs = self.decoder(input_ids=dec_input_ids,
-                                                                              attention_mask=dec_attention_mask,
-                                                                              enc_outputs=enc_outputs,
-                                                                              enc_attention_mask=enc_attention_mask)
-
-        return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_cross_attn_probs
