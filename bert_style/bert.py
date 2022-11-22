@@ -53,12 +53,15 @@ class BertEmbeddings(nn.Module):
         ):
         
         batch_size, seq_len = input_ids.size()
+        device = input_ids.device
+
+        if token_type_ids is None:
+            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=device)
+
+        position_ids = self.position_ids[:, :seq_len].to(device)
 
         inputs_embeds = self.word_embeddings(input_ids)
-        
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
-
-        position_ids = self.position_ids[:, :seq_len].to(input_ids.device)
         position_embeddings = self.position_embeddings(position_ids)
         
         embeddings = inputs_embeds + token_type_embeddings + position_embeddings
@@ -102,18 +105,14 @@ class BertEncoder(nn.Module):
                 attention_mask,
                 ):
 
-        batch_size, seq_len = input_ids.size()
-
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
-        if token_type_ids is None:
-            token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=device)
+        
+        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=False)
 
         outputs = self.embedding(input_ids,
                                  token_type_ids=token_type_ids)
         
-        self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=False)
-
         self_attn_probs = []
         for i, layer in enumerate(self.layers):
             outputs, self_attn_prob = layer(inputs=outputs,
@@ -214,16 +213,13 @@ class BertDecoder(nn.Module):
                 enc_outputs=None,
                 enc_attention_mask=None):
       
-        batch_size, seq_len = input_ids.size()
-
         if attention_mask is None:
             attention_mask = input_ids.ne(self.config.pad_token_id).int()
-        token_type_ids = torch.zeros([batch_size, seq_len], dtype=torch.long, device=input_ids.device)
-
-        outputs = self.embedding(input_ids,
-                                 token_type_ids=token_type_ids)
 
         self_attention_mask = get_extended_attention_mask(attention_mask, autoregressive=True)
+
+        outputs = self.embedding(input_ids,
+                                 token_type_ids=None)
 
         self_attn_probs, cross_attn_probs = [], []
         for i, layer in enumerate(self.layers):
